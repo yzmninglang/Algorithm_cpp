@@ -43,7 +43,7 @@ public:
             prev = curr;        // 3. prev 向前移动
             curr = next;        // 4. curr 向前移动
         }
-        head = prev;            // 5. 更新头指针
+        head = prev;             // 5. 更新头指针
     }
 
     void print() {
