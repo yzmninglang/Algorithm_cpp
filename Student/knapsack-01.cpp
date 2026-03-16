@@ -18,16 +18,25 @@ using namespace std;
 int knapsack01_2D(int W, const vector<int>& weights, const vector<int>& values) {
     int n = weights.size();
     // TODO: 初始化 dp 数组
-    // vector<vector<int>> dp(n + 1, vector<int>(W + 1, 0));
 
-    // TODO: 填充 dp 数组
-    // for (int i = 1; i <= n; ++i) {
-    //     for (int j = 0; j <= W; ++j) {
-    //         ...
-    //     }
-    // }
-
-    return 0; // 返回 dp[n][W]
+    // 已经全部为0了
+    vector<vector<int>> dp(n + 1, vector<int>(W + 1, 0));
+  
+    for (int i = 1; i < n+1; i++)
+    {
+        for (int j = 1; j < W+1; j++)   //j代表当前节点的重量
+        {
+            if(j>= weights[i-1])
+            {
+                dp[i][j]=max(dp[i-1][j-weights[i-1]]+values[i-1],dp[i-1][j]);
+            }
+            else{
+                dp[i][j]=dp[i-1][j];
+            };
+            // cout<<dp[i][j]<<std::endl;
+        }    
+    }
+    return dp[n][W]; // 返回 dp[n][W]
 }
 
 // 2. 一维 DP 实现 (空间优化)
