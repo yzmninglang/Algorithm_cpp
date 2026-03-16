@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Attention & KV Cache 可视化演示</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e1e; color: #fff; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .container { width: 900px; background: #2d2d2d; padding: 30px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); min-height: 500px; position: relative; }
+        .controls { margin-top: 20px; display: flex; gap: 15px; }
+        button { background: #007acc; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background 0.2s; }
+        button:hover { background: #005f9e; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        
+        .step-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; color: #4fc3f7; }
+        .desc { font-size: 16px; color: #bbb; margin-bottom: 30px; min-height: 60px; line-height: 1.5; }
+        
+        .board { display: flex; justify-content: space-around; align-items: center; height: 350px; position: relative; }
+        
+        /* Matrix Styles */
+        .matrix-box { display: flex; flex-direction: column; align-items: center; gap: 5px; opacity: 0; transition: opacity 0.5s, transform 0.5s; }
+        .matrix { display: grid; gap: 2px; background: #444; padding: 2px; border: 2px solid #666; border-radius: 4px; }
+        .cell { width: 30px; height: 30px; background: #333; display: flex; align-items: center; justify-content: center; font-size: 12px; font-family: monospace; transition: all 0.3s; }
+        .label { font-weight: bold; font-family: monospace; font-size: 18px; color: #e0e0e0; }
+        
+        /* Active States */
+        .show { opacity: 1; transform: translateY(0); }
+        .hide { opacity: 0; transform: translateY(20px); pointer-events: none; position: absolute; }
+        
+        .highlight-calc { background: #ff9800; color: #000; font-weight: bold; }
+        .highlight-cache { border: 2px solid #4caf50; box-shadow: 0 0 15px rgba(76, 175, 80, 0.5); }
+        .highlight-flash { background: #e91e63; }
+        
+        .arrow { font-size: 30px; color: #888; opacity: 0; transition: opacity 0.5s; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="step-title" id="title">初始化</div>
+    <div class="desc" id="desc">点击“下一步”开始演示。我们将模拟生成序列 ["我", "爱", "人"]。</div>
+    
+    <div class="board" id="board">
+        </div>
+</div>
+
+<div class="controls">
+    <button id="btnPrev" onclick="prevStep()" disabled>上一步</button>
+    <button id="btnNext" onclick="nextStep()">下一步</button>
+</div>
+
+<script>
+    let currentStep = 0;
+    const board = document.getElementById('board');
+    
+    // 生成矩阵 HTML
+    function createMatrix(id, label, rows, cols, cellText="x") {
+        let gridTemplate = `grid-template-columns: repeat(${cols}, 1fr);`;
+        let html = `<div class="matrix-box hide" id="${id}"><div class="label">${label}</div><div class="matrix" style="${gridTemplate}">`;
+        for(let r=0; r<rows; r++) {
+            for(let c=0; c<cols; c++) {
+                html += `<div class="cell r${r} c${c}">${cellText}</div>`;
+            }
+        }
+        html += `</div></div>`;
+        return html;
+    }
+
+    // 初始化画板元素
+    board.innerHTML = `
+        ${createMatrix('token1', '输入: 我', 1, 4, 'X1')}
+        <div class="arrow hide" id="a1">➡</div>
+        ${createMatrix('q1', 'Q1 (Query)', 1, 2, 'q1')}
+        ${createMatrix('k1', 'K1 (Key)', 1, 2, 'k1')}
+        ${createMatrix('v1', 'V1 (Value)', 1, 2, 'v1')}
+        
+        ${createMatrix('token2', '新输入: 爱', 1, 4, 'X2')}
+        
+        ${createMatrix('kvCache', 'KV Cache (显存)', 2, 2, '🔑')}
+        
+        ${createMatrix('attention', 'Q × K^T', 1, 2, 'S')}
+        ${createMatrix('flash', 'FlashAttention (SRAM)', 2, 2, '⚡')}
+    `;
+
+    const steps = [
+        {
+            title: "1. 处理首个 Token ('我')",
+            desc: "输入词向量 X1，经过全连接层 (Linear) 映射出 Q1, K1, V1。",
+            action: () => {
+                show(['token1', 'a1', 'q1', 'k1', 'v1']);
+                hide(['token2', 'kvCache', 'attention', 'flash']);
+            }
+        },
+        {
+            title: "2. 生成 KV Cache",
+            desc: "重点来了！算好的 K1 和 V1 不会被丢弃，而是直接存入 GPU 显存 (KV Cache)，供未来查阅。此时模型利用 Q1 算出下一个词是 '爱'。",
+            action: () => {
+                show(['token1', 'q1', 'kvCache']);
+                hide(['a1', 'k1', 'v1', 'token2', 'attention']);
+                document.getElementById('kvCache').classList.add('highlight-cache');
+                document.getElementById('kvCache').querySelector('.label').innerText = "Cache [K1, V1]";
+            }
+        },
+        {
+            title: "3. 自回归：处理新 Token ('爱')",
+            desc: "模型开始生成第三个词。送入网络的<b>只有新词</b> '爱'。它被映射为新的 Q2, K2, V2。注意：前面 '我' 的线性映射被跳过了！",
+            action: () => {
+                show(['token2', 'a1', 'q1', 'k1', 'v1', 'kvCache']);
+                hide(['token1', 'attention', 'flash']);
+                document.getElementById('token2').style.position = 'relative';
+                document.getElementById('q1').querySelector('.label').innerText = "Q2";
+                document.getElementById('k1').querySelector('.label').innerText = "K2";
+                document.getElementById('v1').querySelector('.label').innerText = "V2";
+                document.getElementById('kvCache').classList.remove('highlight-cache');
+            }
+        },
+        {
+            title: "4. 追加 KV Cache",
+            desc: "新算出来的 K2 和 V2，直接 <b>Append (追加)</b> 到显存里的 Cache 中。显存占用变大，但省下了计算量。",
+            action: () => {
+                show(['token2', 'q1', 'kvCache']);
+                hide(['a1', 'k1', 'v1', 'attention', 'flash']);
+                document.getElementById('kvCache').classList.add('highlight-cache');
+                document.getElementById('kvCache').querySelector('.label').innerText = "Cache [K1, K2, V1, V2]";
+                
+                // 模拟 Cache 变长
+                const cacheCells = document.getElementById('kvCache').querySelectorAll('.cell');
+                cacheCells.forEach(c => c.style.background = '#4caf50');
+            }
+        },
+        {
+            title: "5. 注意力计算 (利用 Cache)",
+            desc: "现在计算 Attention：只用当前最新词的 <b>Q2</b>，去乘 Cache 里完整的 <b>[K1, K2]^T</b>。计算复杂度从平方级降至线性！",
+            action: () => {
+                show(['q1', 'attention', 'kvCache']);
+                hide(['token2', 'flash']);
+                document.getElementById('q1').querySelector('.label').innerText = "当前 Q2";
+                document.getElementById('attention').querySelector('.label').innerText = "Attention Scores";
+                document.getElementById('attention').querySelector('.cell').classList.add('highlight-calc');
+            }
+        },
+        {
+            title: "6. 如果文本极长怎么办？(FlashAttention 登场)",
+            desc: "当 Cache 里存了 10万 个词时，HBM（显存主存）读写会成为瓶颈。FlashAttention 会将巨大的 Q, K, V 切割成小块 (Block)。",
+            action: () => {
+                show(['flash']);
+                hide(['q1', 'attention', 'kvCache', 'token1', 'token2']);
+                document.getElementById('flash').querySelector('.label').innerText = "SRAM 分块计算 (Tiling)";
+                const flashCells = document.getElementById('flash').querySelectorAll('.cell');
+                flashCells.forEach(c => c.classList.add('highlight-flash'));
+            }
+        },
+        {
+            title: "7. 在线合并更新 (Online Softmax)",
+            desc: "分块加载进极快的 SRAM 后，一边算内积，一边动态更新局部最大值和 Softmax 分母。中间庞大的分数矩阵坚决不写回 HBM！以算力换显存带宽高通量。",
+            action: () => {
+                show(['flash']);
+                document.getElementById('flash').querySelector('.label').innerText = "边算边汇总 (不回写HBM)";
+            }
+        }
+    ];
+
+    function show(ids) { ids.forEach(id => document.getElementById(id).classList.replace('hide', 'show')); }
+    function hide(ids) { ids.forEach(id => document.getElementById(id).classList.replace('show', 'hide')); }
+
+    function updateUI() {
+        document.getElementById('title').innerHTML = steps[currentStep-1]?.title || "初始化";
+        document.getElementById('desc').innerHTML = steps[currentStep-1]?.desc || "点击“下一步”开始演示。我们将模拟生成序列 ['我', '爱', '人']。";
+        
+        // Reset styles
+        document.querySelectorAll('.cell').forEach(c => { c.classList.remove('highlight-calc', 'highlight-flash'); c.style.background = '#333'; });
+        document.getElementById('kvCache').classList.remove('highlight-cache');
+
+        if(currentStep === 0) {
+            hide(['token1', 'a1', 'q1', 'k1', 'v1', 'token2', 'kvCache', 'attention', 'flash']);
+        } else {
+            steps[currentStep-1].action();
+        }
+
+        document.getElementById('btnPrev').disabled = currentStep === 0;
+        document.getElementById('btnNext').disabled = currentStep === steps.length;
+    }
+
+    function nextStep() { if(currentStep < steps.length) { currentStep++; updateUI(); } }
+    function prevStep() { if(currentStep > 0) { currentStep--; updateUI(); } }
+    
+    // 初始化空状态
+    updateUI();
+</script>
+
+</body>
+</html>
