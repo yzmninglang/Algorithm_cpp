@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package messenger;
+
+// 定义服务
+service Messenger {
+  // 定义一个简单的 RPC
+  rpc SendMessage (MessageRequest) returns (MessageResponse) {}
+}
+
+// 请求消息
+message MessageRequest {
+  string sender = 1;
+  string content = 2;
+}
+
+// 响应消息
+message MessageResponse {
+  string reply = 1;
+  bool success = 2;
+}
