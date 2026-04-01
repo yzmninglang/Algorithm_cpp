@@ -1,6 +1,8 @@
 # Prerequisites
 *.d
 
+whereIcango
+
 # Compiled Object files
 *.slo
 *.lo
@@ -183,3 +185,4 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+data.m
